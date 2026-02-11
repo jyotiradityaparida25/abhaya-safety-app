@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abhaya Backend Tester</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+        .container { display: flex; gap: 20px; }
+        #map { height: 500px; width: 70%; border-radius: 10px; border: 2px solid #333; }
+        .controls { width: 30%; background: white; padding: 20px; border-radius: 10px; }
+        button { 
+            width: 100%; padding: 10px; margin-bottom: 10px; cursor: pointer; 
+            background: #007bff; color: white; border: none; border-radius: 5px; font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button.red { background: #dc3545; }
+        button.red:hover { background: #a71d2a; }
+        #logs { 
+            background: #1e1e1e; color: #00ff00; padding: 10px; 
+            height: 200px; overflow-y: scroll; font-family: monospace; font-size: 12px; margin-top: 20px;
+        }
+        h2 { margin-top: 0; }
+    </style>
+</head>
+<body>
+
+    <h1>🛠️ Abhaya Backend Tester</h1>
+    
+    <div class="container">
+        <div id="map"></div>
+
+        <div class="controls">
+            <h2>Actions</h2>
+            <button onclick="checkHealth()">1. Check Server Health</button>
+            <hr>
+            <button onclick="loadHeatmap('day')">2. Load Map (Day Mode)</button>
+            <button onclick="loadHeatmap('night')" style="background: #333;">3. Load Map (Night Mode)</button>
+            <hr>
+            <button onclick="testRoute()">4. Test Safe Route (Blue)</button>
+            <hr>
+            <button class="red" onclick="sendSOS()">5. Send SOS Alert</button>
+            <button onclick="getIncidents()">6. View Incident Log</button>
+            
+            <div id="logs">Logs will appear here...</div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // --- CONFIGURATION ---
+        const API_URL = "http://127.0.0.1:8000"; 
+        
+        // --- MAP SETUP ---
+        // Center on Patia, Bhubaneswar
+        const map = L.map('map').setView([20.3533, 85.8163], 14); 
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let layers = []; // To store lines so we can clear them later
+
+        // --- LOGGER FUNCTION ---
+        function log(msg) {
+            const logDiv = document.getElementById('logs');
+            logDiv.innerHTML = `> ${msg}<br>` + logDiv.innerHTML;
+        }
+
+        // --- 1. HEALTH CHECK ---
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API_URL}/`);
+                const data = await res.json();
+                log(`✅ Server Online: ${JSON.stringify(data)}`);
+            } catch (e) {
+                log(`❌ Server Offline! Make sure uvicorn is running.`);
+            }
+        }
+
+        // --- 2 & 3. LOAD HEATMAP ---
+        async function loadHeatmap(time) {
+            log(`⏳ Loading ${time} map...`);
+            
+            // Clear old lines
+            layers.forEach(layer => map.removeLayer(layer));
+            layers = [];
+
+            try {
+                const res = await fetch(`${API_URL}/api/heatmap?time=${time}`);
+                const data = await res.json();
+                
+                data.roads.forEach(road => {
+                    // Color Logic: Safe = Green, Unsafe = Red
+                    const color = road.safety >= 5 ? '#2ecc71' : '#e74c3c';
+                    const weight = road.safety >= 5 ? 4 : 6; // Make dangerous roads thicker
+
+                    const line = L.polyline(road.coords, { color: color, weight: weight }).addTo(map);
+                    layers.push(line);
+                });
+                
+                log(`✅ Rendered ${data.roads.length} roads.`);
+            } catch (e) {
+                log(`❌ Error loading map: ${e.message}`);
+            }
+        }
+
+        // --- 4. TEST ROUTE ---
+        async function testRoute() {
+            log("⏳ Calculating Safe Route...");
+            
+            // Hardcoded coordinates for Patia (Start -> End)
+            const payload = {
+                start_lat: 20.3533, start_lng: 85.8163, // KIIT Sq
+                end_lat: 20.3400, end_lng: 85.8090,     // Creating a path
+                mode: "safe"
+            };
+
+            try {
+                const res = await fetch(`${API_URL}/api/get-route`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (data.path) {
+                    // Draw Blue Line
+                    const routeLine = L.polyline(data.path, { color: 'blue', weight: 6, dashArray: '10, 10' }).addTo(map);
+                    layers.push(routeLine);
+                    map.fitBounds(routeLine.getBounds()); // Zoom to route
+                    log(`✅ Route Found! (${data.path.length} points)`);
+                }
+            } catch (e) {
+                log(`❌ Route Error: ${e.message}`);
+            }
+        }
+
+        // --- 5. SEND SOS ---
+        async function sendSOS() {
+            const payload = { type: "SOS", lat: 20.3533, lng: 85.8163, description: "Test Alert" };
+            try {
+                await fetch(`${API_URL}/api/report-incident`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                log("🚨 SOS Sent to Database!");
+            } catch (e) { log(`❌ SOS Failed: ${e.message}`); }
+        }
+
+        // --- 6. GET INCIDENTS ---
+        async function getIncidents() {
+            try {
+                const res = await fetch(`${API_URL}/api/incidents`);
+                const data = await res.json();
+                log(`📋 Database has ${data.incidents.length} reports.`);
+                console.log(data.incidents); // View full list in browser console
+            } catch (e) { log(`❌ Fetch Error: ${e.message}`); }
+        }
+
+    </script>
+</body>
+</html>

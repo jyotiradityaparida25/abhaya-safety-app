@@ -1,0 +1,15 @@
+# Python Backend
+__pycache__/
+*.pyc
+venv/
+*.db
+*.graphml
+
+# Frontend & Node
+node_modules/
+.expo/
+npm-debug.log
+.DS_Store
+
+# Environment Variables (Keep secrets safe!)
+.env
